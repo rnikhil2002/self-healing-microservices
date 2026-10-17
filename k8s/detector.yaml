@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: healer
+  namespace: self-healing
+---
+# Only what the healer needs: restart pods, roll back and scale deployments in this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: healer
+  namespace: self-healing
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: healer
+  namespace: self-healing
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: healer
+subjects:
+  - kind: ServiceAccount
+    name: healer
+    namespace: self-healing
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: detector
+  namespace: self-healing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: detector
+  template:
+    metadata:
+      labels:
+        app: detector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8090"
+    spec:
+      serviceAccountName: healer
+      containers:
+        - name: detector
+          image: detector:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8090
+          env:
+            - name: PROMETHEUS_URL
+              value: http://prometheus:9090
+            - name: SERVICES
+              value: order-service,payment-service
+            - name: REMEDIATION_MODE
+              value: kubernetes
+            - name: NAMESPACE
+              value: self-healing
+            - name: WARMUP_SAMPLES
+              value: "24"
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openai
+                  key: api-key
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: detector
+  namespace: self-healing
+spec:
+  selector:
+    app: detector
+  ports:
+    - port: 8090
+      targetPort: 8090
