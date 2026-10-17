@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: self-healing
+    folder: Self-Healing
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
